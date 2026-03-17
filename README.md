@@ -1,15 +1,11 @@
 # Tools
 
-A collection of practical tools for media processing, analysis, and productivity.
+A personal collection of practical tools for media processing, analysis, and productivity. Each tool lives in its own folder with its own documentation.
 
 ## Available Tools
 
-### [whisper-transcribe](whisper-transcribe/)
-Transcribe audio and video files (mp4, mp3, wav, etc.) into timestamped Markdown using OpenAI's Whisper speech-to-text model. Runs locally on your GPU — nothing is sent to the cloud.
+| Tool | Description | Docs |
+|---|---|---|
+| [whisper-transcribe](whisper-transcribe/) | Transcribe audio/video files (mp4, mp3, wav, etc.) to timestamped Markdown using OpenAI Whisper. Runs locally on your GPU. | [Setup Guide](whisper-transcribe/README.md) |
 
-```
-python transcribe.py "path\to\file.mp4"
-python transcribe.py "path\to\folder"
-```
-
-[Full setup guide and documentation](whisper-transcribe/README.md)
+*More tools coming soon.*
