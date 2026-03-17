@@ -1,19 +1,22 @@
 # Transcribe audio/video files to timestamped Markdown using OpenAI Whisper.
 # Runs locally on your GPU for speed. Whisper handles mp4/mp3/wav directly.
+# Works on Windows, Mac, and Linux.
 #
-# USAGE (from Anaconda Prompt):
+# USAGE:
+#   Windows: run from Anaconda Prompt
+#   Mac/Linux: run from Terminal (with conda or venv activated)
 #
 #   Transcribe one file:
-#     python transcribe.py "path\to\file.mp4"
+#     python transcribe.py "path/to/file.mp4"
 #
 #   Transcribe all audio/video files in a folder:
-#     python transcribe.py "path\to\folder"
+#     python transcribe.py "path/to/folder"
 #
 #   Save output to a different folder:
-#     python transcribe.py "path\to\folder" -o "path\to\output\folder"
+#     python transcribe.py "path/to/folder" -o "path/to/output/folder"
 #
 #   Use a smaller/faster model (less accurate):
-#     python transcribe.py "path\to\file.mp4" --model medium
+#     python transcribe.py "path/to/file.mp4" --model medium
 
 import subprocess
 import sys
@@ -185,10 +188,17 @@ def main():
     import torch
     import whisper
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
     print(f"\nDevice: {device}")
     if device == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
+    elif device == "mps":
+        print("GPU: Apple Silicon (Metal Performance Shaders)")
 
     total_start = time.time()
 
