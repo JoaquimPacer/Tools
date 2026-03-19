@@ -29,5 +29,6 @@ pause
 exit /b 1
 
 :run
+cd /d "%~dp0"
 python "%~dp0dictate.py"
 if %ERRORLEVEL% NEQ 0 pause

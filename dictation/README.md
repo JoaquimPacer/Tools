@@ -192,6 +192,7 @@ GPU (CUDA) is used automatically if available. On macOS, Apple Silicon is detect
 - **Check logs**: See `dictation.log` in the tool's folder
 
 ### Windows
+- **Permission denied on startup** (e.g. `realtimesst.log` in `System32`): The tool's working directory must be its own folder, not a system directory. This is handled automatically — if you see this error on an older version, update to the latest
 - **PyAudio errors**: `pip install pyaudio` (or `conda install pyaudio`)
 - **Verify CUDA**: `python -c "import torch; print(torch.cuda.is_available())"`
 

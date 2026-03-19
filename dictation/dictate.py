@@ -21,6 +21,10 @@ import threading
 
 PLATFORM = platform.system()  # "Windows", "Darwin", "Linux"
 
+# Ensure CWD is the script directory so library log files (e.g. realtimesst.log)
+# land next to the script rather than in a privileged directory like System32.
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
