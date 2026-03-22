@@ -27,13 +27,16 @@ if platform.system() != "Windows":
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(SCRIPT_DIR)
 
+# Fix OpenMP conflict in Anaconda (multiple libraries link different runtimes)
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
 _missing = []
 for _pkg, _mod in [
     ("faster-whisper", "faster_whisper"),
-    ("sounddevice", "sounddevice"),
+    ("PyAudio", "pyaudio"),
     ("numpy", "numpy"),
     ("pynput", "pynput"),
     ("pystray", "pystray"),
@@ -52,7 +55,7 @@ if _missing:
     sys.exit(1)
 
 import numpy as np
-import sounddevice as sd
+import pyaudio
 from faster_whisper import WhisperModel
 from pynput import keyboard
 from pynput.keyboard import Key
@@ -205,9 +208,10 @@ def _check_single_instance():
 class Recorder:
     def __init__(self):
         self._active = False
-        self._chunks = []
+        self._frames = []
         self._lock = threading.Lock()
         self._stream = None
+        self._pa = pyaudio.PyAudio()
 
     @property
     def active(self):
@@ -215,17 +219,17 @@ class Recorder:
 
     def start(self):
         with self._lock:
-            self._chunks.clear()
+            self._frames.clear()
         self._active = True
         try:
-            self._stream = sd.InputStream(
-                samplerate=SAMPLE_RATE,
+            self._stream = self._pa.open(
+                format=pyaudio.paFloat32,
                 channels=1,
-                dtype="float32",
-                callback=self._callback,
-                blocksize=int(SAMPLE_RATE * 0.1),
+                rate=SAMPLE_RATE,
+                input=True,
+                frames_per_buffer=int(SAMPLE_RATE * 0.1),
+                stream_callback=self._callback,
             )
-            self._stream.start()
         except Exception as e:
             log.error(f"Mic start failed: {e}")
             self._active = False
@@ -234,26 +238,25 @@ class Recorder:
         self._active = False
         if self._stream:
             try:
-                self._stream.stop()
+                self._stream.stop_stream()
                 self._stream.close()
             except Exception:
                 pass
             self._stream = None
         with self._lock:
-            if not self._chunks:
+            if not self._frames:
                 return None
-            audio = np.concatenate(self._chunks).flatten()
-            self._chunks.clear()
+            audio = np.frombuffer(b"".join(self._frames), dtype=np.float32)
+            self._frames.clear()
         if len(audio) / SAMPLE_RATE < MIN_DURATION_SEC:
             return None
         return audio
 
-    def _callback(self, indata, frames, time_info, status):
-        if status:
-            log.warning(f"Audio: {status}")
+    def _callback(self, in_data, frame_count, time_info, status):
         if self._active:
             with self._lock:
-                self._chunks.append(indata.copy())
+                self._frames.append(in_data)
+        return (None, pyaudio.paContinue)
 
 
 # ═══════════════════════════════════════════════════════════════════
