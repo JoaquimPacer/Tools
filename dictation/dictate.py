@@ -2,13 +2,11 @@
 """
 Dictation Tool v2 — CapsLock-activated speech-to-text for Windows.
 
-Hold CapsLock to record, release to transcribe and paste.
-Quick-tap CapsLock to toggle recording for longer dictation.
+Tap CapsLock to start recording, tap again to transcribe and paste.
 Runs silently in the system tray.
 
 Controls:
-    Hold CapsLock   — hold-to-talk (release pastes transcription)
-    Tap  CapsLock   — toggle recording on/off (tap again to stop & paste)
+    CapsLock        — toggle recording on/off (tap to start, tap to stop & paste)
     System tray     — right-click to quit
 """
 
@@ -68,7 +66,6 @@ LANGUAGE = "en"
 GPU_MODEL = "large-v3-turbo"   # Best accuracy — fast on RTX GPUs
 CPU_MODEL = "small.en"         # Fallback for no-GPU systems
 MIN_DURATION_SEC = 0.3         # Ignore recordings shorter than this
-HOLD_THRESHOLD_SEC = 0.4       # Hold > this = hold-to-talk, else tap-toggle
 SAMPLE_RATE = 16000            # Whisper expects 16 kHz mono
 BEEP_START = (600, 80)         # (Hz, ms) — beep when recording starts
 BEEP_DONE = (800, 80)          # beep when transcription is pasted
@@ -97,6 +94,11 @@ KEYEVENTF_UNICODE = 0x0004
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
+
+# Flag to distinguish synthetic CapsLock events (from our watchdog/timer)
+# from real user keypresses. Without this, the watchdog's CapsLock toggling
+# gets picked up by the keyboard hook and falsely triggers recording.
+_synthetic_caps = threading.Event()
 
 
 class KEYBDINPUT(ctypes.Structure):
@@ -179,11 +181,14 @@ def _set_clipboard(text):
 
 
 def _force_caps_off():
-    """Turn CapsLock off if it's currently on."""
+    """Turn CapsLock off if it's currently on. Marks the event as synthetic
+    so the keyboard hook ignores it."""
     if user32.GetKeyState(VK_CAPITAL) & 1:
+        _synthetic_caps.set()
         user32.keybd_event(VK_CAPITAL, 0, 0, 0)
         user32.keybd_event(VK_CAPITAL, 0, KEYEVENTF_KEYUP, 0)
         time.sleep(0.05)
+        _synthetic_caps.clear()
 
 
 def _check_single_instance():
@@ -342,45 +347,26 @@ class DictationController:
         self._listener = None
         self._lock = threading.Lock()
         self._caps_held = False
-        self._toggle_mode = False
-        self._press_time = 0.0
 
-    # --- CapsLock handlers (called from hook thread via short-lived threads) ---
+    # --- CapsLock handler (called from hook thread via short-lived thread) ---
 
-    def on_caps_press(self):
+    def on_caps_toggle(self):
+        """Toggle recording on/off. Called once per CapsLock press-release cycle."""
         with self._lock:
-            if self._caps_held:
-                return
-            self._caps_held = True
-            self._press_time = time.time()
-            should_start = not self.recorder.active
-        if should_start:
-            self._start_recording()
-
-    def on_caps_release(self):
-        with self._lock:
-            if not self._caps_held:
-                return
-            self._caps_held = False
-            elapsed = time.time() - self._press_time
-            if self._toggle_mode:
-                action = "stop"
-                self._toggle_mode = False
-            elif elapsed >= HOLD_THRESHOLD_SEC:
-                action = "stop"
-            else:
-                action = "toggle_on"
-                self._toggle_mode = True
-        if action == "stop":
+            is_recording = self.recorder.active
+        if is_recording:
+            log.info("[STOP] CapsLock pressed — stopping recording")
             self._stop_and_transcribe()
         else:
-            log.info("Toggle mode — tap CapsLock again to stop")
+            log.info("[START] CapsLock pressed — starting recording")
+            self._start_recording()
 
     # --- Recording / transcription ---
 
     def _start_recording(self):
         self.recorder.start()
         if self.recorder.active:
+            log.info("[MIC ON] Recording...")
             self._update_tray("recording")
             threading.Thread(
                 target=lambda: winsound.Beep(*BEEP_START), daemon=True
@@ -389,8 +375,11 @@ class DictationController:
     def _stop_and_transcribe(self):
         audio = self.recorder.stop()
         if audio is None:
+            log.info("[MIC OFF] No audio captured (too short or empty)")
             self._update_tray("ready")
             return
+        duration = len(audio) / SAMPLE_RATE
+        log.info(f"[MIC OFF] Got {duration:.1f}s of audio, transcribing...")
         self._update_tray("transcribing")
         threading.Thread(
             target=self._transcribe_worker, args=(audio,), daemon=True
@@ -441,24 +430,21 @@ class DictationController:
 
     def _start_listener(self):
         """Start the pynput keyboard listener with CapsLock interception."""
-        caps_down = {"v": False}  # mutable container for closure
         controller = self
 
         def win32_filter(msg, data):
             if data.vkCode == VK_CAPITAL:
-                if msg == 256 and not caps_down["v"]:  # WM_KEYDOWN (initial)
-                    caps_down["v"] = True
+                # Ignore synthetic CapsLock events from our watchdog/timer
+                if _synthetic_caps.is_set():
+                    return True  # let it through without processing
+                # Toggle on key-UP (one clean action per press-release cycle)
+                if msg == 257:  # WM_KEYUP
                     threading.Thread(
-                        target=controller.on_caps_press, daemon=True
+                        target=controller.on_caps_toggle, daemon=True
                     ).start()
-                elif msg == 257:  # WM_KEYUP
-                    caps_down["v"] = False
-                    threading.Thread(
-                        target=controller.on_caps_release, daemon=True
-                    ).start()
-                # Always force CapsLock LED off
+                # Force CapsLock LED off after any real CapsLock event
                 threading.Timer(0.05, _force_caps_off).start()
-                return False  # suppress CapsLock
+                return False  # suppress CapsLock from reaching other apps
             return True  # pass other keys through
 
         self._listener = keyboard.Listener(
@@ -497,8 +483,7 @@ class DictationController:
 
         log.info("=" * 50)
         log.info("  Dictation Tool v2")
-        log.info("  Hold CapsLock = record → transcribe → paste")
-        log.info("  Tap  CapsLock = toggle recording on/off")
+        log.info("  CapsLock = toggle recording on/off")
         log.info("=" * 50)
 
         # Force CapsLock off before hooking
@@ -526,7 +511,7 @@ class DictationController:
             threading.Thread(target=self._caps_watchdog, daemon=True).start()
 
             self._update_tray("ready")
-            log.info("Ready! Hold or tap CapsLock to dictate.")
+            log.info("Ready! Tap CapsLock to start dictating.")
 
         self._tray.run(setup=init)
 
