@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Live Dictation Tool — Caps Lock toggles speech-to-text at your cursor.
+Dictation Tool v2 — CapsLock-activated speech-to-text for Windows.
 
-Cross-platform: Windows, macOS, Linux.
-
-Usage:
-    python dictate.py
+Hold CapsLock to record, release to transcribe and paste.
+Quick-tap CapsLock to toggle recording for longer dictation.
+Runs silently in the system tray.
 
 Controls:
-    Caps Lock  — toggle dictation on/off
-    Escape     — quit the tool
+    Hold CapsLock   — hold-to-talk (release pastes transcription)
+    Tap  CapsLock   — toggle recording on/off (tap again to stop & paste)
+    System tray     — right-click to quit
 """
 
 import sys
@@ -18,533 +18,540 @@ import platform
 import time
 import logging
 import threading
+import ctypes
+import ctypes.wintypes
+import winsound
 
-PLATFORM = platform.system()  # "Windows", "Darwin", "Linux"
+if platform.system() != "Windows":
+    print("This version supports Windows only.")
+    sys.exit(1)
 
-# Ensure CWD is the script directory so library log files (e.g. realtimesst.log)
-# land next to the script rather than in a privileged directory like System32.
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(SCRIPT_DIR)
 
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
 _missing = []
-for _mod in ["pynput", "RealtimeSTT"]:
+for _pkg, _mod in [
+    ("faster-whisper", "faster_whisper"),
+    ("sounddevice", "sounddevice"),
+    ("numpy", "numpy"),
+    ("pynput", "pynput"),
+    ("pystray", "pystray"),
+    ("Pillow", "PIL"),
+]:
     try:
         __import__(_mod)
     except ImportError:
-        _missing.append(_mod)
+        _missing.append(_pkg)
 if _missing:
-    print(f"Missing: {', '.join(_missing)}")
-    print("Run:  pip install -r requirements.txt")
-    if PLATFORM == "Windows":
-        input("Press Enter to exit...")
+    msg = f"Missing packages: {', '.join(_missing)}\nRun: pip install -r requirements.txt"
+    try:
+        ctypes.windll.user32.MessageBoxW(0, msg, "Dictation Tool", 0x10)
+    except Exception:
+        print(msg)
     sys.exit(1)
 
+import numpy as np
+import sounddevice as sd
+from faster_whisper import WhisperModel
 from pynput import keyboard
-from pynput.keyboard import Key, Controller as KBController
+from pynput.keyboard import Key
+import pystray
+from PIL import Image, ImageDraw
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-DEBOUNCE_SEC = 0.30
+# ═══════════════════════════════════════════════════════════════════
+# Configuration
+# ═══════════════════════════════════════════════════════════════════
+LANGUAGE = "en"
+GPU_MODEL = "large-v3-turbo"   # Best accuracy — fast on RTX GPUs
+CPU_MODEL = "small.en"         # Fallback for no-GPU systems
+MIN_DURATION_SEC = 0.3         # Ignore recordings shorter than this
+HOLD_THRESHOLD_SEC = 0.4       # Hold > this = hold-to-talk, else tap-toggle
+SAMPLE_RATE = 16000            # Whisper expects 16 kHz mono
+BEEP_START = (600, 80)         # (Hz, ms) — beep when recording starts
+BEEP_DONE = (800, 80)          # beep when transcription is pasted
 
-# ---------------------------------------------------------------------------
-# Logging (file + console)
-# ---------------------------------------------------------------------------
-LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dictation.log")
+# ═══════════════════════════════════════════════════════════════════
+# Logging (file only — no console with pythonw)
+# ═══════════════════════════════════════════════════════════════════
+LOG_FILE = os.path.join(SCRIPT_DIR, "dictation.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
+    handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8")],
 )
 log = logging.getLogger("dictation")
 
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-_synthetic_caps = threading.Event()
-_kb = KBController()
+# ═══════════════════════════════════════════════════════════════════
+# Windows helpers
+# ═══════════════════════════════════════════════════════════════════
+VK_CAPITAL = 0x14
+CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
+INPUT_KEYBOARD = 1
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
 
-# ===========================================================================
-# Platform-specific implementations
-# ===========================================================================
-
-if PLATFORM == "Windows":
-    import ctypes
-
-    # -- Windows constants --
-    INPUT_KEYBOARD = 1
-    KEYEVENTF_UNICODE = 0x0004
-    KEYEVENTF_KEYUP = 0x0002
-    VK_BACK = 0x08
-    VK_CAPITAL = 0x14
-
-    # -- ctypes structures for SendInput --
-    class KEYBDINPUT(ctypes.Structure):
-        _fields_ = [
-            ("wVk", ctypes.c_ushort),
-            ("wScan", ctypes.c_ushort),
-            ("dwFlags", ctypes.c_ulong),
-            ("time", ctypes.c_ulong),
-            ("dwExtraInfo", ctypes.c_void_p),
-        ]
-
-    class MOUSEINPUT(ctypes.Structure):
-        _fields_ = [
-            ("dx", ctypes.c_long),
-            ("dy", ctypes.c_long),
-            ("mouseData", ctypes.c_ulong),
-            ("dwFlags", ctypes.c_ulong),
-            ("time", ctypes.c_ulong),
-            ("dwExtraInfo", ctypes.c_void_p),
-        ]
-
-    class HARDWAREINPUT(ctypes.Structure):
-        _fields_ = [
-            ("uMsg", ctypes.c_ulong),
-            ("wParamL", ctypes.c_ushort),
-            ("wParamH", ctypes.c_ushort),
-        ]
-
-    class _INPUTunion(ctypes.Union):
-        _fields_ = [
-            ("mi", MOUSEINPUT),
-            ("ki", KEYBDINPUT),
-            ("hi", HARDWAREINPUT),
-        ]
-
-    class INPUT(ctypes.Structure):
-        _fields_ = [
-            ("type", ctypes.c_ulong),
-            ("union", _INPUTunion),
-        ]
-
-    _SendInput = ctypes.windll.user32.SendInput
-
-    def _send_vk(vk):
-        inp = (INPUT * 2)()
-        inp[0].type = INPUT_KEYBOARD
-        inp[0].union.ki.wVk = vk
-        inp[1].type = INPUT_KEYBOARD
-        inp[1].union.ki.wVk = vk
-        inp[1].union.ki.dwFlags = KEYEVENTF_KEYUP
-        _SendInput(2, inp, ctypes.sizeof(INPUT))
-
-    def send_backspaces(n):
-        for _ in range(n):
-            _send_vk(VK_BACK)
-            time.sleep(0.003)
-
-    def send_unicode_string(text):
-        for ch in text:
-            inp = (INPUT * 2)()
-            inp[0].type = INPUT_KEYBOARD
-            inp[0].union.ki.wVk = 0
-            inp[0].union.ki.wScan = ord(ch)
-            inp[0].union.ki.dwFlags = KEYEVENTF_UNICODE
-            inp[1].type = INPUT_KEYBOARD
-            inp[1].union.ki.wVk = 0
-            inp[1].union.ki.wScan = ord(ch)
-            inp[1].union.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-            _SendInput(2, inp, ctypes.sizeof(INPUT))
-            time.sleep(0.003)
-
-    def caps_lock_on():
-        return bool(ctypes.windll.user32.GetKeyState(VK_CAPITAL) & 1)
-
-    def force_caps_off():
-        if caps_lock_on():
-            _synthetic_caps.set()
-            _send_vk(VK_CAPITAL)
-            time.sleep(0.05)
-            _synthetic_caps.clear()
-
-    def check_single_instance():
-        mutex = ctypes.windll.kernel32.CreateMutexW(
-            None, True, "Global\\DictationToolMutex"
-        )
-        if ctypes.windll.kernel32.GetLastError() == 183:
-            print("Dictation tool is already running.")
-            sys.exit(0)
-        return mutex
-
-    def set_title(t):
-        try:
-            ctypes.windll.kernel32.SetConsoleTitleW(t)
-        except Exception:
-            pass
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
 
 
-elif PLATFORM == "Darwin":  # macOS
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", ctypes.c_ushort),
+        ("wScan", ctypes.c_ushort),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
 
-    def send_backspaces(n):
-        for _ in range(n):
-            _kb.press(Key.backspace)
-            _kb.release(Key.backspace)
-            time.sleep(0.003)
 
-    def send_unicode_string(text):
-        _kb.type(text)
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
 
-    def caps_lock_on():
-        try:
-            import Quartz
 
-            flags = Quartz.CGEventSourceFlagsState(
-                Quartz.kCGEventSourceStateHIDSystemState
-            )
-            return bool(flags & Quartz.kCGEventFlagMaskAlphaShift)
-        except ImportError:
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", ctypes.c_ulong),
+        ("wParamL", ctypes.c_ushort),
+        ("wParamH", ctypes.c_ushort),
+    ]
+
+
+class _INPUTunion(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
+
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_ulong), ("union", _INPUTunion)]
+
+
+_SendInput = user32.SendInput
+
+
+def _send_ctrl_v():
+    """Simulate Ctrl+V via SendInput."""
+    VK_CONTROL = 0x11
+    VK_V = 0x56
+    inputs = (INPUT * 4)()
+    # Ctrl down
+    inputs[0].type = INPUT_KEYBOARD
+    inputs[0].union.ki.wVk = VK_CONTROL
+    # V down
+    inputs[1].type = INPUT_KEYBOARD
+    inputs[1].union.ki.wVk = VK_V
+    # V up
+    inputs[2].type = INPUT_KEYBOARD
+    inputs[2].union.ki.wVk = VK_V
+    inputs[2].union.ki.dwFlags = KEYEVENTF_KEYUP
+    # Ctrl up
+    inputs[3].type = INPUT_KEYBOARD
+    inputs[3].union.ki.wVk = VK_CONTROL
+    inputs[4 - 1].union.ki.dwFlags = KEYEVENTF_KEYUP
+    _SendInput(4, inputs, ctypes.sizeof(INPUT))
+
+
+def _set_clipboard(text):
+    """Copy text to the Windows clipboard."""
+    if not user32.OpenClipboard(0):
+        time.sleep(0.05)
+        if not user32.OpenClipboard(0):
             return False
-
-    def force_caps_off():
-        if caps_lock_on():
-            _synthetic_caps.set()
-            _kb.press(Key.caps_lock)
-            _kb.release(Key.caps_lock)
-            time.sleep(0.05)
-            _synthetic_caps.clear()
-
-    def check_single_instance():
-        import fcntl
-
-        lock_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), ".dictation.lock"
-        )
-        lock_file = open(lock_path, "w")
-        try:
-            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (IOError, OSError):
-            print("Dictation tool is already running.")
-            sys.exit(0)
-        return lock_file
-
-    def set_title(t):
-        sys.stdout.write(f"\033]0;{t}\007")
-        sys.stdout.flush()
-
-
-elif PLATFORM == "Linux":
-    import subprocess as _sp
-
-    def send_backspaces(n):
-        if n <= 0:
-            return
-        try:
-            _sp.run(
-                ["xdotool", "key", "--clearmodifiers", "--delay", "3"]
-                + ["BackSpace"] * n,
-                check=True,
-                timeout=10,
-            )
-        except (FileNotFoundError, _sp.SubprocessError):
-            for _ in range(n):
-                _kb.press(Key.backspace)
-                _kb.release(Key.backspace)
-                time.sleep(0.003)
-
-    def send_unicode_string(text):
-        if not text:
-            return
-        try:
-            _sp.run(
-                ["xdotool", "type", "--clearmodifiers", "--delay", "3", "--", text],
-                check=True,
-                timeout=10,
-            )
-        except (FileNotFoundError, _sp.SubprocessError):
-            _kb.type(text)
-
-    def caps_lock_on():
-        try:
-            result = _sp.run(
-                ["xset", "q"], capture_output=True, text=True, timeout=2
-            )
-            return "Caps Lock:   on" in result.stdout
-        except Exception:
-            return False
-
-    def force_caps_off():
-        if caps_lock_on():
-            _synthetic_caps.set()
-            try:
-                _sp.run(["xdotool", "key", "Caps_Lock"], timeout=2)
-            except (FileNotFoundError, _sp.SubprocessError):
-                _kb.press(Key.caps_lock)
-                _kb.release(Key.caps_lock)
-            time.sleep(0.05)
-            _synthetic_caps.clear()
-
-    def check_single_instance():
-        import fcntl
-
-        lock_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), ".dictation.lock"
-        )
-        lock_file = open(lock_path, "w")
-        try:
-            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (IOError, OSError):
-            print("Dictation tool is already running.")
-            sys.exit(0)
-        return lock_file
-
-    def set_title(t):
-        sys.stdout.write(f"\033]0;{t}\007")
-        sys.stdout.flush()
-
-
-else:
-    print(f"Unsupported platform: {PLATFORM}")
-    sys.exit(1)
-
-
-# ===========================================================================
-# Common code (all platforms)
-# ===========================================================================
-
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
-_listener = None
-recording = False
-recorder = None
-_partial = ""
-_text_lock = threading.Lock()
-_last_caps_time = 0.0
-_shutdown = threading.Event()
-
-# ---------------------------------------------------------------------------
-# RealtimeSTT callbacks
-# ---------------------------------------------------------------------------
-def on_realtime_stabilized(text):
-    global _partial
-    if not recording:
-        return
-    text = text.strip()
-    with _text_lock:
-        common = 0
-        for a, b in zip(_partial, text):
-            if a == b:
-                common += 1
-            else:
-                break
-        to_delete = len(_partial) - common
-        to_type = text[common:]
-        if to_delete:
-            send_backspaces(to_delete)
-        if to_type:
-            send_unicode_string(to_type)
-        _partial = text
-
-
-def on_final_text(text):
-    global _partial
-    if not recording:
-        return
-    text = text.strip()
-    with _text_lock:
-        if _partial:
-            send_backspaces(len(_partial))
-            _partial = ""
-        if text:
-            send_unicode_string(text + " ")
-
-
-# ---------------------------------------------------------------------------
-# GPU / model selection
-# ---------------------------------------------------------------------------
-def pick_device_and_models():
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            log.info(f"GPU (CUDA): {torch.cuda.get_device_name(0)}")
-            return "cuda", "base.en", "small.en"
-    except ImportError:
-        pass
-
-    # macOS: check for Apple Silicon MPS
-    if PLATFORM == "Darwin":
-        try:
-            import torch
-
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                log.info("GPU: Apple Silicon (MPS)")
-                return "mps", "base.en", "small.en"
-        except ImportError:
-            pass
-
-    log.info("No GPU — CPU fallback with tiny model (slower).")
-    return "cpu", "tiny.en", "tiny.en"
-
-
-# ---------------------------------------------------------------------------
-# Recorder
-# ---------------------------------------------------------------------------
-def create_recorder(device, rt_model, final_model):
-    from RealtimeSTT import AudioToTextRecorder
-
-    compute = "float16" if device in ("cuda", "mps") else "int8"
-    return AudioToTextRecorder(
-        model=final_model,
-        language="en",
-        compute_type=compute,
-        device=device if device != "mps" else "cpu",  # faster-whisper uses CPU on MPS
-        enable_realtime_transcription=True,
-        realtime_model_type=rt_model,
-        realtime_processing_pause=0.15,
-        on_realtime_transcription_stabilized=on_realtime_stabilized,
-        silero_sensitivity=0.4,
-        post_speech_silence_duration=0.6,
-        spinner=False,
-        print_transcription_time=False,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Toggle
-# ---------------------------------------------------------------------------
-def start_recording():
-    global recording, _partial
-    with _text_lock:
-        recording = True
-        _partial = ""
-    log.info("[MIC ON]  Speak now...")
-    set_title("Dictation [LISTENING]")
-    threading.Thread(target=_listen_loop, daemon=True).start()
-
-
-def _listen_loop():
-    try:
-        while recording and not _shutdown.is_set():
-            recorder.text(on_final_text)
-    except Exception as e:
-        if recording:
-            log.error(f"Recorder error: {e}")
-
-
-def stop_recording():
-    global recording, _partial
-    with _text_lock:
-        recording = False
-        _partial = ""
-    log.info("[MIC OFF] Paused.")
-    set_title("Dictation [ready]")
-    try:
-        recorder.abort()
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------------------
-# Keyboard hook
-# ---------------------------------------------------------------------------
-def on_press(key):
-    global _last_caps_time
-    if key == Key.esc:
-        log.info("Escape — shutting down...")
-        _shutdown.set()
-        if recording:
-            stop_recording()
-        return False
-
-    # macOS / Linux: handle Caps Lock in on_press
-    if PLATFORM != "Windows" and key == Key.caps_lock:
-        if _synthetic_caps.is_set():
-            return
-        now = time.time()
-        if now - _last_caps_time >= DEBOUNCE_SEC:
-            _last_caps_time = now
-            if recording:
-                stop_recording()
-            else:
-                start_recording()
-        threading.Timer(0.05, force_caps_off).start()
-
-
-def win32_filter(msg, data):
-    """Windows-only low-level keyboard hook for Caps Lock interception."""
-    global _last_caps_time
-    VK_CAPITAL_LOCAL = 0x14
-    if data.vkCode == VK_CAPITAL_LOCAL:
-        if _synthetic_caps.is_set():
-            return True
-        if msg == 256:  # WM_KEYDOWN
-            now = time.time()
-            if now - _last_caps_time >= DEBOUNCE_SEC:
-                _last_caps_time = now
-                if recording:
-                    stop_recording()
-                else:
-                    start_recording()
-            threading.Timer(0.05, force_caps_off).start()
-        return False
+    user32.EmptyClipboard()
+    data = (text + "\0").encode("utf-16-le")
+    h = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+    p = kernel32.GlobalLock(h)
+    ctypes.memmove(p, data, len(data))
+    kernel32.GlobalUnlock(h)
+    user32.SetClipboardData(CF_UNICODETEXT, h)
+    user32.CloseClipboard()
     return True
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-def main():
-    global _listener, recorder
+def _force_caps_off():
+    """Turn CapsLock off if it's currently on."""
+    if user32.GetKeyState(VK_CAPITAL) & 1:
+        user32.keybd_event(VK_CAPITAL, 0, 0, 0)
+        user32.keybd_event(VK_CAPITAL, 0, KEYEVENTF_KEYUP, 0)
+        time.sleep(0.05)
 
-    _mutex = check_single_instance()  # noqa: F841
 
-    set_title("Dictation [loading...]")
-    log.info("=" * 50)
-    log.info("  Live Dictation Tool")
-    log.info(f"  Platform: {PLATFORM}")
-    log.info("  Caps Lock = toggle  |  Escape = quit")
-    log.info("=" * 50)
+def _check_single_instance():
+    """Prevent multiple instances via a named mutex."""
+    kernel32.CreateMutexW(None, True, "Global\\DictationToolV2Mutex")
+    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+        log.info("Already running, exiting.")
+        sys.exit(0)
 
-    force_caps_off()
 
-    device, rt_model, final_model = pick_device_and_models()
-    log.info(f"Loading: realtime={rt_model}, final={final_model} ...")
-    log.info("(First run downloads models — may take a minute.)")
+# ═══════════════════════════════════════════════════════════════════
+# Audio Recorder
+# ═══════════════════════════════════════════════════════════════════
+class Recorder:
+    def __init__(self):
+        self._active = False
+        self._chunks = []
+        self._lock = threading.Lock()
+        self._stream = None
 
-    try:
-        recorder = create_recorder(device, rt_model, final_model)
-    except Exception as e:
-        log.error(f"Recorder init failed: {e}")
-        if "microphone" in str(e).lower() or "pyaudio" in str(e).lower():
-            log.error("Make sure a microphone is connected and PyAudio is installed.")
-        if PLATFORM == "Windows":
-            input("Press Enter to exit...")
-        sys.exit(1)
+    @property
+    def active(self):
+        return self._active
 
-    set_title("Dictation [ready]")
-    log.info("Ready!  Press Caps Lock to start dictating.\n")
+    def start(self):
+        with self._lock:
+            self._chunks.clear()
+        self._active = True
+        try:
+            self._stream = sd.InputStream(
+                samplerate=SAMPLE_RATE,
+                channels=1,
+                dtype="float32",
+                callback=self._callback,
+                blocksize=int(SAMPLE_RATE * 0.1),
+            )
+            self._stream.start()
+        except Exception as e:
+            log.error(f"Mic start failed: {e}")
+            self._active = False
 
-    # Platform-specific listener setup
-    if PLATFORM == "Windows":
-        _listener = keyboard.Listener(
-            on_press=on_press,
+    def stop(self):
+        self._active = False
+        if self._stream:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        with self._lock:
+            if not self._chunks:
+                return None
+            audio = np.concatenate(self._chunks).flatten()
+            self._chunks.clear()
+        if len(audio) / SAMPLE_RATE < MIN_DURATION_SEC:
+            return None
+        return audio
+
+    def _callback(self, indata, frames, time_info, status):
+        if status:
+            log.warning(f"Audio: {status}")
+        if self._active:
+            with self._lock:
+                self._chunks.append(indata.copy())
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Transcriber
+# ═══════════════════════════════════════════════════════════════════
+class Transcriber:
+    def __init__(self):
+        self._model = None
+        self._lock = threading.Lock()
+
+    def load(self):
+        log.info("Loading Whisper model...")
+        try:
+            self._model = WhisperModel(
+                GPU_MODEL, device="cuda", compute_type="float16"
+            )
+            log.info(f"Loaded {GPU_MODEL} on CUDA")
+        except Exception as e:
+            log.info(f"CUDA unavailable ({e}), trying CPU...")
+            try:
+                self._model = WhisperModel(
+                    CPU_MODEL, device="cpu", compute_type="int8"
+                )
+                log.info(f"Loaded {CPU_MODEL} on CPU")
+            except Exception as e2:
+                log.error(f"Model load failed: {e2}")
+                user32.MessageBoxW(
+                    0,
+                    f"Failed to load Whisper model:\n{e2}",
+                    "Dictation Tool Error",
+                    0x10,
+                )
+                os._exit(1)
+
+    def transcribe(self, audio):
+        with self._lock:
+            segments, _ = self._model.transcribe(
+                audio, language=LANGUAGE, beam_size=5, vad_filter=True
+            )
+            return " ".join(s.text for s in segments).strip()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Text Output
+# ═══════════════════════════════════════════════════════════════════
+def paste_text(text):
+    """Copy text to clipboard and simulate Ctrl+V to paste it."""
+    if not text:
+        return
+    if _set_clipboard(text):
+        time.sleep(0.03)
+        _send_ctrl_v()
+        log.info(f"Pasted: {text[:80]}{'...' if len(text) > 80 else ''}")
+    else:
+        log.error("Failed to set clipboard")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# System Tray
+# ═══════════════════════════════════════════════════════════════════
+_ICON_COLORS = {
+    "loading": (158, 158, 158),
+    "ready": (76, 175, 80),
+    "recording": (244, 67, 54),
+    "transcribing": (33, 150, 243),
+}
+
+
+def _make_icon(state):
+    c = _ICON_COLORS.get(state, _ICON_COLORS["ready"])
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse([4, 4, 60, 60], fill=(*c, 255))
+    # Mic body
+    d.rounded_rectangle([25, 14, 39, 38], radius=7, fill=(255, 255, 255, 220))
+    # Mic arc
+    d.arc([20, 28, 44, 50], 0, 180, fill=(255, 255, 255, 220), width=3)
+    # Mic stand
+    d.line([32, 50, 32, 56], fill=(255, 255, 255, 220), width=3)
+    return img
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Controller
+# ═══════════════════════════════════════════════════════════════════
+class DictationController:
+    def __init__(self):
+        self.recorder = Recorder()
+        self.transcriber = Transcriber()
+        self._tray = None
+        self._listener = None
+        self._lock = threading.Lock()
+        self._caps_held = False
+        self._toggle_mode = False
+        self._press_time = 0.0
+
+    # --- CapsLock handlers (called from hook thread via short-lived threads) ---
+
+    def on_caps_press(self):
+        with self._lock:
+            if self._caps_held:
+                return
+            self._caps_held = True
+            self._press_time = time.time()
+            should_start = not self.recorder.active
+        if should_start:
+            self._start_recording()
+
+    def on_caps_release(self):
+        with self._lock:
+            if not self._caps_held:
+                return
+            self._caps_held = False
+            elapsed = time.time() - self._press_time
+            if self._toggle_mode:
+                action = "stop"
+                self._toggle_mode = False
+            elif elapsed >= HOLD_THRESHOLD_SEC:
+                action = "stop"
+            else:
+                action = "toggle_on"
+                self._toggle_mode = True
+        if action == "stop":
+            self._stop_and_transcribe()
+        else:
+            log.info("Toggle mode — tap CapsLock again to stop")
+
+    # --- Recording / transcription ---
+
+    def _start_recording(self):
+        self.recorder.start()
+        if self.recorder.active:
+            self._update_tray("recording")
+            threading.Thread(
+                target=lambda: winsound.Beep(*BEEP_START), daemon=True
+            ).start()
+
+    def _stop_and_transcribe(self):
+        audio = self.recorder.stop()
+        if audio is None:
+            self._update_tray("ready")
+            return
+        self._update_tray("transcribing")
+        threading.Thread(
+            target=self._transcribe_worker, args=(audio,), daemon=True
+        ).start()
+
+    def _transcribe_worker(self, audio):
+        try:
+            text = self.transcriber.transcribe(audio)
+            if text:
+                paste_text(text + " ")
+        except Exception as e:
+            log.error(f"Transcription error: {e}")
+        finally:
+            self._update_tray("ready")
+            try:
+                winsound.Beep(*BEEP_DONE)
+            except Exception:
+                pass
+
+    # --- Tray ---
+
+    def _update_tray(self, state):
+        if self._tray:
+            try:
+                self._tray.icon = _make_icon(state)
+                self._tray.title = f"Dictation [{state}]"
+            except Exception:
+                pass
+
+    def _quit(self, icon=None, item=None):
+        log.info("Shutting down...")
+        if self.recorder.active:
+            self.recorder.stop()
+        if self._listener:
+            try:
+                self._listener.stop()
+            except Exception:
+                pass
+        if self._tray:
+            try:
+                self._tray.stop()
+            except Exception:
+                pass
+        _cleanup_pid()
+        os._exit(0)
+
+    # --- Keyboard hook ---
+
+    def _start_listener(self):
+        """Start the pynput keyboard listener with CapsLock interception."""
+        caps_down = {"v": False}  # mutable container for closure
+        controller = self
+
+        def win32_filter(msg, data):
+            if data.vkCode == VK_CAPITAL:
+                if msg == 256 and not caps_down["v"]:  # WM_KEYDOWN (initial)
+                    caps_down["v"] = True
+                    threading.Thread(
+                        target=controller.on_caps_press, daemon=True
+                    ).start()
+                elif msg == 257:  # WM_KEYUP
+                    caps_down["v"] = False
+                    threading.Thread(
+                        target=controller.on_caps_release, daemon=True
+                    ).start()
+                # Always force CapsLock LED off
+                threading.Timer(0.05, _force_caps_off).start()
+                return False  # suppress CapsLock
+            return True  # pass other keys through
+
+        self._listener = keyboard.Listener(
             win32_event_filter=win32_filter,
             suppress=False,
         )
-    else:
-        _listener = keyboard.Listener(
-            on_press=on_press,
-            suppress=False,
+        self._listener.start()
+        log.info("Keyboard hook active")
+
+    def _monitor_listener(self):
+        """Restart the keyboard listener if it dies."""
+        while True:
+            time.sleep(5)
+            if self._listener and not self._listener.is_alive():
+                log.warning("Keyboard listener died — restarting...")
+                try:
+                    self._start_listener()
+                except Exception as e:
+                    log.error(f"Listener restart failed: {e}")
+
+    def _caps_watchdog(self):
+        """Periodically force CapsLock off in case suppression misses."""
+        while True:
+            time.sleep(0.5)
+            try:
+                if user32.GetKeyState(VK_CAPITAL) & 1:
+                    _force_caps_off()
+            except Exception:
+                pass
+
+    # --- Main entry ---
+
+    def run(self):
+        _check_single_instance()
+        _write_pid()
+
+        log.info("=" * 50)
+        log.info("  Dictation Tool v2")
+        log.info("  Hold CapsLock = record → transcribe → paste")
+        log.info("  Tap  CapsLock = toggle recording on/off")
+        log.info("=" * 50)
+
+        # Force CapsLock off before hooking
+        _force_caps_off()
+
+        # System tray
+        menu = pystray.Menu(
+            pystray.MenuItem("Dictation Tool v2", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit", self._quit),
+        )
+        self._tray = pystray.Icon(
+            "dictation", _make_icon("loading"), "Dictation [loading...]", menu
         )
 
-    _listener.start()
-    _listener.join()
+        def init(icon):
+            # Load model (may download on first run — ~1.5 GB for large-v3-turbo)
+            self.transcriber.load()
 
+            # Start keyboard hook
+            self._start_listener()
+
+            # Start watchdogs
+            threading.Thread(target=self._monitor_listener, daemon=True).start()
+            threading.Thread(target=self._caps_watchdog, daemon=True).start()
+
+            self._update_tray("ready")
+            log.info("Ready! Hold or tap CapsLock to dictate.")
+
+        self._tray.run(setup=init)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PID file (for stop_dictation.bat)
+# ═══════════════════════════════════════════════════════════════════
+_PID_FILE = os.path.join(SCRIPT_DIR, ".dictation.pid")
+
+
+def _write_pid():
     try:
-        recorder.shutdown()
+        with open(_PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
     except Exception:
         pass
-    force_caps_off()
-    log.info("Goodbye.")
 
 
+def _cleanup_pid():
+    try:
+        os.remove(_PID_FILE)
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    main()
+    DictationController().run()
