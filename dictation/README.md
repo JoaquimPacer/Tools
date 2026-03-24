@@ -1,72 +1,23 @@
-# Dictation Tool v2
+# Dictation (Live Speech-to-Text)
 
-**Hold CapsLock** to record speech, **release** to transcribe and paste — in any application.
+This folder previously contained a custom dictation tool. It's been retired in favor of a much better project:
 
-Uses OpenAI's Whisper (`large-v3-turbo`) for high-accuracy local transcription. Runs silently in the system tray.
+## Use [Whisper Key Local](https://github.com/PinW/whisper-key-local)
 
-## Controls
+**Whisper Key** by [PinW](https://github.com/PinW) is a standalone speech-to-text app that does exactly what this custom tool was trying to do — and does it well. Press a hotkey, speak, and text appears at your cursor in any app.
 
-| Action | Effect |
-|---|---|
-| **Hold CapsLock** | Record while held, transcribe & paste on release |
-| **Tap CapsLock** | Toggle recording on/off (for longer dictation) |
-| **System tray → Quit** | Stop the tool |
+- Runs locally (no cloud, full privacy)
+- Uses OpenAI's Whisper model with GPU acceleration
+- System tray app, configurable hotkeys
+- Auto-pastes transcription at your cursor
+- Windows and macOS
 
-## How It Works
+### Quick Start (Windows)
 
-1. **Hold CapsLock** — audio recording starts immediately
-2. **Speak** — your microphone captures everything
-3. **Release CapsLock** — audio is transcribed by Whisper and pasted at your cursor via clipboard
+1. Download `whisper-key.exe` from the [latest release](https://github.com/PinW/whisper-key-local/releases/latest)
+2. Run it — it self-installs and launches as a tray app
+3. Press **Ctrl+Win** to start recording, **Ctrl** to stop and paste
 
-No real-time partial text. No jittery corrections. Just clean, accurate text after you finish speaking — like ChatGPT voice input.
+### GPU Note
 
-For longer dictation, **tap CapsLock once** to start recording (hands-free), then **tap again** to stop and paste.
-
-## Setup
-
-### Prerequisites
-- Windows 10/11
-- Python 3.8+ ([python.org](https://www.python.org/downloads/) or Anaconda/Miniconda)
-- A microphone
-- NVIDIA GPU with CUDA recommended (works on CPU, just slower)
-
-### Install
-1. Double-click `install.bat`
-   - Installs Python packages
-   - Registers auto-start on login (Task Scheduler)
-2. Double-click `start_dictation.bat` to start now
-3. **First run downloads the Whisper model (~1.5 GB)** — look for the system tray icon to turn green
-
-### System Tray Icon
-
-| Color | Meaning |
-|---|---|
-| Grey | Loading model |
-| Green | Ready — press CapsLock to dictate |
-| Red | Recording |
-| Blue | Transcribing |
-
-### Stop / Uninstall
-- **Stop**: right-click tray icon → Quit, or run `stop_dictation.bat`
-- **Uninstall**: run `uninstall.bat`
-
-## Audio Feedback
-
-- **Low beep** (600 Hz) — recording started
-- **High beep** (800 Hz) — transcription pasted
-
-## Model
-
-| GPU Available | Model | Size | Notes |
-|---|---|---|---|
-| Yes (CUDA) | `large-v3-turbo` | ~1.5 GB | Best accuracy, fast on modern GPUs |
-| No | `small.en` | ~244 MB | Reasonable accuracy on CPU |
-
-## Troubleshooting
-
-- **No tray icon**: check `dictation.log` in this folder for errors
-- **Slow transcription**: ensure CUDA is working — `python -c "import faster_whisper; print('OK')"`
-- **CapsLock LED flashes**: normal — the tool turns it off immediately
-- **No sound from mic**: check Windows Sound settings → Input
-- **Already running**: only one instance allowed; stop the existing one first
-- **Model download fails**: check internet connection; models come from Hugging Face
+If you have an NVIDIA GPU and transcription fails with a `cublas64_12.dll` error, you need to copy that DLL into the app's bundled ctranslate2 directory. The standalone exe uses pyapp, which stores its Python environment in `%LOCALAPPDATA%\pyapp\data\whisper-key-local\`. Find `ctranslate2.dll` in there and copy `cublas64_12.dll` and `cublasLt64_12.dll` next to it. These DLLs come from PyTorch or the [CUDA 12 Toolkit](https://developer.nvidia.com/cuda-downloads).
