@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1390" height="700" viewBox="0 0 1390 700">
+<rect x="0" y="0" width="1390" height="700" fill="#ffffff"/>
+<text x="30" y="50.4" font-family="'Segoe UI', Arial, sans-serif" font-size="24" fill="#1c1913">Tools: what each folder does</text>
+<text x="30" y="74.2" font-family="Consolas, 'Courier New', monospace" font-size="12" fill="#6f6a59">verified 2026-07-16 · text twin that stays current: docs/REPO_MAP.md</text>
+<polyline points="790,50 830,50" fill="none" stroke="#17635a" stroke-width="2"/>
+<text x="838" y="52.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">how a transcript is made</text>
+<polyline points="1050,50 1090,50" fill="none" stroke="#17635a" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="1098" y="52.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">retired path</text>
+<rect x="30" y="100" width="260" height="330" rx="8" fill="#f4f0e8" stroke="#8a8471" stroke-width="1" stroke-dasharray="8 6"/>
+<text x="44" y="121.9" font-family="Consolas, 'Courier New', monospace" font-size="14" fill="#6f6a59">INPUT</text>
+<rect x="380" y="100" width="300" height="330" rx="8" fill="#edf1f6" stroke="#8a8471" stroke-width="1" stroke-dasharray="8 6"/>
+<text x="394" y="121.9" font-family="Consolas, 'Courier New', monospace" font-size="14" fill="#6f6a59">WHISPER-TRANSCRIBE/</text>
+<rect x="780" y="100" width="300" height="330" rx="8" fill="#eaf2f0" stroke="#8a8471" stroke-width="1" stroke-dasharray="8 6"/>
+<text x="794" y="121.9" font-family="Consolas, 'Courier New', monospace" font-size="14" fill="#6f6a59">OUTPUT</text>
+<rect x="30" y="470" width="1330" height="200" rx="8" fill="#f2efe9" stroke="#8a8471" stroke-width="1" stroke-dasharray="8 6"/>
+<text x="44" y="491.9" font-family="Consolas, 'Courier New', monospace" font-size="14" fill="#6f6a59">REFERENCE (docs and the retired tool)</text>
+<rect x="50" y="180" width="220" height="110" rx="8" fill="#ffffff" stroke="#1c1913" stroke-width="1"/>
+<text x="62" y="202.75" font-family="'Segoe UI', Arial, sans-serif" font-size="15" fill="#1c1913">audio / video</text>
+<text x="62" y="224.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">mp4, mp3, wav, m4a, mkv,</text>
+<text x="62" y="239.79999999999998" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">webm, avi, flac, ogg,</text>
+<text x="62" y="255.39999999999998" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">or a whole folder</text>
+<rect x="405" y="160" width="250" height="100" rx="8" fill="#ffffff" stroke="#1c1913" stroke-width="1"/>
+<text x="417" y="182.75" font-family="'Segoe UI', Arial, sans-serif" font-size="15" fill="#1c1913">transcribe.py</text>
+<text x="417" y="204.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">wrapper around Whisper:</text>
+<text x="417" y="219.79999999999998" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">auto-detects GPU, installs</text>
+<text x="417" y="235.39999999999998" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">missing deps, batches folders</text>
+<rect x="405" y="340" width="250" height="80" rx="8" fill="#ffffff" stroke="#1c1913" stroke-width="1"/>
+<text x="417" y="362.75" font-family="'Segoe UI', Arial, sans-serif" font-size="15" fill="#1c1913">Whisper large-v3</text>
+<text x="417" y="384.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">3 GB model, downloaded</text>
+<text x="417" y="399.8" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">once, runs fully local</text>
+<rect x="805" y="160" width="250" height="110" rx="8" fill="#17635a" stroke="#17635a" stroke-width="1"/>
+<text x="817" y="182.75" font-family="'Segoe UI', Arial, sans-serif" font-size="15" fill="#ffffff">timestamped transcript</text>
+<text x="817" y="204.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#e4f0ee">one .md per input, saved</text>
+<text x="817" y="219.79999999999998" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#e4f0ee">next to the original, with</text>
+<text x="817" y="235.39999999999998" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#e4f0ee">[0:00] paragraph stamps</text>
+<rect x="60" y="515" width="220" height="120" rx="8" fill="#ffffff" stroke="#1c1913" stroke-width="1"/>
+<text x="72" y="537.75" font-family="'Segoe UI', Arial, sans-serif" font-size="15" fill="#1c1913">README.md</text>
+<text x="72" y="559.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">front door: the table of</text>
+<text x="72" y="574.8000000000001" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">tools and their doc links</text>
+<rect x="320" y="515" width="220" height="120" rx="8" fill="#ffffff" stroke="#1c1913" stroke-width="1"/>
+<text x="332" y="537.75" font-family="'Segoe UI', Arial, sans-serif" font-size="15" fill="#1c1913">dictation/</text>
+<text x="332" y="559.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">tombstone: custom tool</text>
+<text x="332" y="574.8000000000001" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">retired, folder is now</text>
+<text x="332" y="590.4000000000001" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">a signpost</text>
+<rect x="750" y="515" width="240" height="120" rx="8" fill="#ffffff" stroke="#1c1913" stroke-width="1"/>
+<text x="762" y="537.75" font-family="'Segoe UI', Arial, sans-serif" font-size="15" fill="#1c1913">Whisper Key Local</text>
+<text x="762" y="559.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">external app by PinW:</text>
+<text x="762" y="574.8000000000001" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">hotkey speech-to-text</text>
+<text x="762" y="590.4000000000001" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">at the cursor, local</text>
+<rect x="1030" y="515" width="300" height="120" rx="8" fill="#ffffff" stroke="#1c1913" stroke-width="1"/>
+<text x="1042" y="537.75" font-family="'Segoe UI', Arial, sans-serif" font-size="15" fill="#1c1913">docs/ + this file</text>
+<text x="1042" y="559.2" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">REPO_MAP (text twin), MARKETING,</text>
+<text x="1042" y="574.8000000000001" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">map generator; regenerate when</text>
+<text x="1042" y="590.4000000000001" font-family="'Segoe UI', Arial, sans-serif" font-size="12" fill="#55503f">structure changes</text>
+<polyline points="270,210 405,210" fill="none" stroke="#17635a" stroke-width="2"/>
+<polygon points="405,210 393,215 393,205" fill="#17635a"/>
+<rect x="311.5" y="200" width="52" height="20" rx="8" fill="#ffffff" stroke="#c9c3b4" stroke-width="1"/>
+<text x="319.5" y="213.35" font-family="Consolas, 'Courier New', monospace" font-size="11" fill="#1c1913">reads</text>
+<polyline points="530,260 530,340" fill="none" stroke="#17635a" stroke-width="2"/>
+<polygon points="530,340 525,328 535,328" fill="#17635a"/>
+<rect x="504" y="283" width="52" height="34" rx="8" fill="#ffffff" stroke="#c9c3b4" stroke-width="1"/>
+<text x="512" y="296.35" font-family="Consolas, 'Courier New', monospace" font-size="11" fill="#1c1913">loads</text>
+<text x="515.6" y="310.35" font-family="Consolas, 'Courier New', monospace" font-size="11" fill="#1c1913">once</text>
+<polyline points="655,200 805,200" fill="none" stroke="#17635a" stroke-width="2"/>
+<polygon points="805,200 793,205 793,195" fill="#17635a"/>
+<rect x="700.4" y="183" width="59.2" height="34" rx="8" fill="#ffffff" stroke="#c9c3b4" stroke-width="1"/>
+<text x="708.4" y="196.35" font-family="Consolas, 'Courier New', monospace" font-size="11" fill="#1c1913">writes</text>
+<text x="719.2" y="210.35" font-family="Consolas, 'Courier New', monospace" font-size="11" fill="#1c1913">.md</text>
+<polyline points="540,555 750,555" fill="none" stroke="#17635a" stroke-width="2" stroke-dasharray="8 6"/>
+<polygon points="750,555 738,560 738,550" fill="#17635a"/>
+<rect x="608.2" y="538" width="73.6" height="34" rx="8" fill="#ffffff" stroke="#c9c3b4" stroke-width="1"/>
+<text x="616.2" y="551.35" font-family="Consolas, 'Courier New', monospace" font-size="11" fill="#1c1913">replaced</text>
+<text x="637.8" y="565.35" font-family="Consolas, 'Courier New', monospace" font-size="11" fill="#1c1913">by</text>
+</svg>

@@ -10,3 +10,5 @@ A personal collection of practical tools for media processing, analysis, and pro
 | [dictation](dictation/) | Live speech-to-text — retired in favor of [Whisper Key Local](https://github.com/PinW/whisper-key-local). See folder for setup notes. | [Notes](dictation/README.md) |
 
 *More tools coming soon.*
+
+Orientation: [docs/REPO_MAP.md](docs/REPO_MAP.md) (what every folder is for, plus the visual map) and [docs/MARKETING.md](docs/MARKETING.md) (how I explain this repo).
